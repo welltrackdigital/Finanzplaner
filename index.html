@@ -1260,6 +1260,14 @@ thead th[data-dir="-1"]::after{content:" \25BC";font-size:9px}
 [data-theme="tinte"] .cal-legend .dot:not(.paid){background:#7E7CB4}
 @media(max-width:520px){ .tx-count{min-width:15px;height:15px;font-size:9px;padding:0 4px} .cal-hint{font-size:12px} }
 
+/* hero: this month's income and spending under the balance */
+.hero-flow{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:13px;font-weight:700}
+.hero-flow .fi{color:#BFF0D0}
+.hero-flow .fo{color:#FFC9D2}
+.hero h2.neg{color:#FFC9D2 !important;-webkit-text-fill-color:#FFC9D2 !important}
+/* action buttons in envelope / goal cards never shrink below their label */
+.envelope .erow,.goal .erow{flex-wrap:wrap}
+.envelope .erow .btn,.goal .erow .btn{flex:1 1 auto;min-width:max-content;padding-left:12px;padding-right:14px}
 .rr-center span{font-size:9.5px;letter-spacing:.04em}
 @media(max-width:480px){
   .modal .mrow{flex-wrap:wrap;gap:8px}
@@ -1476,6 +1484,7 @@ thead th[data-dir="-1"]::after{content:" \25BC";font-size:9px}
           <div class="hero-left">
             <div class="kicker" id="heroKicker">Gehaltsübersicht</div>
             <h2 class="num" id="heroAmount">—</h2>
+            <div class="hero-flow num" id="heroFlow"></div>
             <div class="hero-meta"><span class="cycle-chip"><span data-ic="refresh" data-sz="14"></span><span id="heroCycle">Monatliches Gehalt</span></span></div>
             <div class="hero-cta">
               <button class="btn btn-light btn-sm" id="btnAddLogHero"><span data-ic="plus" data-sz="15"></span>Hinzufügen</button>
@@ -2153,8 +2162,9 @@ function setGauge(id, valId, pct){
   el.style.strokeDashoffset = CIRC * (1 - Math.min(100,Math.max(0,pct))/100);
   $(valId).textContent = Math.round(pct) + "%";
 }
+function monthIncome(){ const mk = curMK(); return state.transactions.filter(t=>t.type===INC && String(t.date||"").slice(0,7)===mk).reduce((a,t)=>a+(Number(t.amount)||0),0); }
 function splitCalc(){
-  const p = state.paycheck, A = Number(p.amount)||0;
+  const p = state.paycheck, A = (Number(p.amount)||0) || monthIncome();
   const spend = Math.max(0, 100 - p.pctBills - p.pctSave);
   const safe = A*spend/100, spent = spentThisCycle();
   return { A, spend, spent,
@@ -2171,7 +2181,7 @@ function cycleRange(){
   const d = new Date(now), c = state.paycheck.cycle;
   if(c === "weekly") d.setDate(d.getDate() - 6);
   else if(c === "biweekly") d.setDate(d.getDate() - 13);
-  else d.setDate(1);
+  else { d.setDate(1); return { from: key(d), to: key(new Date(d.getFullYear(), d.getMonth()+1, 0)) }; }
   return { from: key(d), to: key(now) };
 }
 function spentThisCycle(){
@@ -2188,13 +2198,19 @@ function renderSplitter(){
   $("pctSave").value = p.pctSave;   $("outSave").textContent = p.pctSave + "%";
   $("pctSpend").value = s.spend;    $("outSpend").textContent = s.spend + "%";
   /* hero */
-  countUp($("heroAmount"), s.A, v => fmt(v));
-  $("heroCycle").textContent = ({weekly:"Wöchentliches Gehalt", biweekly:"14-tägiges Gehalt", monthly:"Monatliches Gehalt"})[p.cycle] || "Gehalt";
+  const _mk = curMK(), _mtx = state.transactions.filter(t=>String(t.date||"").slice(0,7)===_mk);
+  const _inc = _mtx.filter(t=>t.type===INC).reduce((a,t)=>a+(Number(t.amount)||0),0);
+  const _exp = _mtx.filter(t=>t.type!==INC).reduce((a,t)=>a+(Number(t.amount)||0),0);
+  const _bal = Math.round((_inc-_exp)*100)/100;
+  countUp($("heroAmount"), _bal, v => fmt(v));
+  $("heroAmount").classList.toggle("neg", _bal < 0);
+  if($("heroFlow")) $("heroFlow").innerHTML = '<span class="fi">+' + fmt(_inc) + ' Einnahmen</span><span class="fo">−' + fmt(_exp) + ' Ausgaben</span>';
+  $("heroCycle").textContent = (({weekly:"Wöchentliches Gehalt", biweekly:"14-tägiges Gehalt", monthly:"Monatliches Gehalt"})[p.cycle] || "Gehalt") + (Number(p.amount) > 0 ? ": " + fmt(p.amount) : "");
   try{
     const _h = new Date().getHours();
     const _k = _h>=5&&_h<10 ? "Guten Morgen" : _h>=10&&_h<18 ? "Guten Tag" : _h>=18&&_h<22 ? "Guten Abend" : "Gute Nacht";
     const _n = (state.profile && state.profile.name) ? ", "+state.profile.name : "";
-    const _hk = $("heroKicker"); if(_hk) _hk.textContent = _k+_n+" · Gehaltsübersicht";
+    const _hk = $("heroKicker"); if(_hk) _hk.textContent = _k+_n+" · Saldo " + monthLabel();
   }catch(e){}
   $("heroSafe").textContent = fmt(s.safeLeft);  $("heroBills").textContent = fmt(s.bills);  $("heroSave").textContent = fmt(s.save);
   $("heroSafeSub").textContent = fmt(s.spent) + " von " + fmt(s.safe) + " ausgegeben";
@@ -2270,7 +2286,7 @@ function renderStats(){
 /* ==================== BILLS ==================== */
 const ordinal = n => n + ".";
 function totalDue(){ return round2(state.bills.filter(b=>!isPaid(b)).reduce((s,b)=>s+Number(b.amount||0),0)); }
-function refreshBills(){ save(); renderBills(); renderCalendar(); renderStats(); }
+function refreshBills(){ save(); renderBills(); renderCalendar(); renderStats(); renderSplitter(); renderDueNote(); }
 function toggleBill(id){
   const bill = state.bills.find(x=>x.id===id); if(!bill) return;
   const mk = curMK(), on = !isPaid(bill, mk);
